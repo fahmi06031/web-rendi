@@ -81,33 +81,125 @@ class PlateRecognition():
 
     
     def parse_ocr_result(self, text):
-        plate_parts = []
-        date_parts = []
-        confidence = 0.0
+        tokens = self.normalize_ocr_tokens(text)
+        plate_date = self.choose_plate_date(tokens)
+        candidates = self.build_plate_candidates(tokens)
 
+        if not candidates:
+            return "", plate_date, 0
+
+        best = max(candidates, key=lambda item: item["score"])
+        return best["plate"], plate_date, best["score"] + (1 if plate_date else 0)
+
+    
+    def normalize_ocr_tokens(self, text):
+        tokens = []
         for item in text:
-            raw_value = item[1].upper().replace(" ", "").strip()
+            raw_value = str(item[1]).upper().strip()
             if not raw_value:
                 continue
-            confidence += float(item[2]) if len(item) > 2 else 0.5
 
+            confidence = float(item[2]) if len(item) > 2 else 0.5
+            box = item[0] if item else []
+            xs = [point[0] for point in box] if box else [0]
+            ys = [point[1] for point in box] if box else [0]
+            clean = re.sub(r'[^A-Z0-9]', '', raw_value)
             date_match = re.search(r'\d{1,2}[-./]\d{1,2}', raw_value)
-            if date_match:
-                date_parts.append(date_match.group(0).replace(".", "-").replace("/", "-"))
-                raw_value = raw_value.replace(date_match.group(0), "")
+            tokens.append({
+                "raw": raw_value,
+                "clean": clean,
+                "confidence": confidence,
+                "x": sum(xs) / len(xs),
+                "y": sum(ys) / len(ys),
+                "height": max(ys) - min(ys) if ys else 0,
+                "is_date": bool(date_match),
+                "date": date_match.group(0).replace(".", "-").replace("/", "-") if date_match else "",
+            })
 
-            raw_value = re.sub(r'[^A-Z0-9]', '', raw_value)
-            if raw_value:
-                plate_parts.append(raw_value)
+        return sorted(tokens, key=lambda item: (item["y"], item["x"]))
 
-        plate_number = self.format_plate_number("".join(plate_parts).strip())
-        plate_date = " ".join(date_parts).strip()
-        score = self.score_plate_candidate(plate_number, plate_date, confidence)
-        return plate_number, plate_date, score
+    
+    def choose_plate_date(self, tokens):
+        dates = [token["date"] for token in tokens if token.get("date")]
+        return dates[0] if dates else ""
+
+    
+    def build_plate_candidates(self, tokens):
+        usable_tokens = [
+            token for token in tokens
+            if token["clean"] and not token["is_date"] and not self.is_noise_token(token["clean"])
+        ]
+        usable_tokens = sorted(usable_tokens, key=lambda item: item["x"])
+        candidates = {}
+
+        for start in range(len(usable_tokens)):
+            combined = ""
+            confidence = 0.0
+            max_height = 0
+
+            for end in range(start, min(len(usable_tokens), start + 4)):
+                token = usable_tokens[end]
+                combined += token["clean"]
+                confidence += token["confidence"]
+                max_height = max(max_height, token["height"])
+                self.add_candidate(candidates, combined, confidence, end - start + 1, max_height)
+
+        if usable_tokens:
+            combined = "".join(token["clean"] for token in usable_tokens)
+            confidence = sum(token["confidence"] for token in usable_tokens)
+            max_height = max((token["height"] for token in usable_tokens), default=0)
+            self.add_candidate(candidates, combined, confidence, len(usable_tokens), max_height)
+
+        return list(candidates.values())
+
+    
+    def add_candidate(self, candidates, raw_value, confidence, token_count, height):
+        formatted = self.format_plate_number(raw_value)
+        if not self.is_valid_indonesian_plate(formatted):
+            return
+
+        compact_raw = re.sub(r'[^A-Z0-9]', '', raw_value.upper())
+        compact_plate = re.sub(r'[^A-Z0-9]', '', formatted.upper())
+        dropped_chars = max(len(compact_raw) - len(compact_plate), 0)
+        match = re.match(r'^([A-Z]{1,2})(\d{1,4})([A-Z]{1,3})$', compact_plate)
+        prefix, numbers, suffix = match.groups()
+
+        score = self.score_plate_candidate(formatted, "", confidence)
+        score += min(len(numbers), 4) * 0.8
+        score += min(len(suffix), 3) * 0.6
+        score += min(token_count, 3) * 0.4
+        score += min(height, 80) / 80
+        score -= dropped_chars * 2.0
+
+        if compact_raw and compact_raw[0].isdigit():
+            score -= 6
+        if prefix == "B":
+            score += 0.5
+        if len(numbers) >= 3:
+            score += 0.8
+
+        key = compact_plate
+        if key not in candidates or candidates[key]["score"] < score:
+            candidates[key] = {
+                "plate": formatted,
+                "score": score,
+            }
+
+    
+    def is_noise_token(self, value):
+        if len(value) <= 1 and not value.isalpha():
+            return True
+        if value in {"CNN", "CWN", "OCW", "CCW", "CW", "WWW"}:
+            return True
+        return False
 
     
     def format_plate_number(self, plate_number):
         compact = re.sub(r'[^A-Z0-9]', '', plate_number.upper())
+        direct_match = re.match(r'^([A-Z]{1,2})(\d{1,4})([A-Z]{1,3})$', compact)
+        if direct_match and direct_match.group(1) in self.INDONESIAN_PLATE_PREFIXES:
+            return " ".join(direct_match.groups())
+
         compact = self.correct_plate_compact(compact)
         match = re.match(r'^([A-Z]{1,2})(\d{1,4})([A-Z]{1,3})$', compact)
         if match and match.group(1) in self.INDONESIAN_PLATE_PREFIXES:
