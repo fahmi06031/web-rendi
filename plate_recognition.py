@@ -9,6 +9,18 @@ from utils import correct_skew, resize_img
 import easyocr
 
 class PlateRecognition():
+    INDONESIAN_PLATE_PREFIXES = {
+        "A", "AA", "AB", "AD", "AE", "AG",
+        "B", "BA", "BB", "BD", "BE", "BG", "BH", "BK", "BL", "BM", "BN", "BP",
+        "D", "DA", "DB", "DC", "DD", "DE", "DG", "DH", "DK", "DL", "DM", "DN", "DR", "DS", "DT", "DW", "DZ",
+        "E", "EA", "EB", "ED",
+        "F", "G", "H", "K",
+        "KB", "KH", "KT", "KU",
+        "L", "M", "N", "P",
+        "PA", "PB",
+        "R", "S", "T", "W", "Z",
+    }
+
     def __init__(self, model_path, enhancer, cuda=False):
         self.model_path = model_path
         self.cuda = cuda
@@ -98,7 +110,7 @@ class PlateRecognition():
         compact = re.sub(r'[^A-Z0-9]', '', plate_number.upper())
         compact = self.correct_plate_compact(compact)
         match = re.match(r'^([A-Z]{1,2})(\d{1,4})([A-Z]{1,3})$', compact)
-        if match:
+        if match and match.group(1) in self.INDONESIAN_PLATE_PREFIXES:
             return " ".join(match.groups())
         return plate_number
 
@@ -121,12 +133,17 @@ class PlateRecognition():
                         raw_prefix = segment[:prefix_len]
                         raw_number = segment[prefix_len:prefix_len + number_len]
                         raw_suffix = segment[prefix_len + number_len:]
+                        if not any(char.isalpha() for char in raw_prefix):
+                            continue
+
                         prefix = self.correct_expected_letters(raw_prefix)
                         number = self.correct_expected_digits(raw_number)
                         suffix = self.correct_expected_letters(raw_suffix)
                         candidate = f"{prefix}{number}{suffix}"
 
                         if not re.match(r'^[A-Z]{1,2}\d{1,4}[A-Z]{1,3}$', candidate):
+                            continue
+                        if prefix not in self.INDONESIAN_PLATE_PREFIXES:
                             continue
 
                         score = 0
@@ -179,15 +196,26 @@ class PlateRecognition():
         compact = re.sub(r'[^A-Z0-9]', '', plate_number.upper())
         score = confidence
 
-        if re.match(r'^[A-Z]{1,2}\s\d{1,4}\s[A-Z]{1,3}$', plate_number):
+        if self.is_valid_indonesian_plate(plate_number):
             score += 10
-        elif re.match(r'^[A-Z]{1,2}\d{1,4}[A-Z]{1,3}$', compact):
-            score += 7
         if 5 <= len(compact) <= 10:
             score += 2
         if plate_date:
             score += 1
         return score
+
+    
+    def is_valid_indonesian_plate(self, plate_number):
+        compact = re.sub(r'[^A-Z0-9]', '', (plate_number or "").upper())
+        match = re.match(r'^([A-Z]{1,2})(\d{1,4})([A-Z]{1,3})$', compact)
+        if not match:
+            return False
+        prefix, numbers, suffix = match.groups()
+        if prefix not in self.INDONESIAN_PLATE_PREFIXES:
+            return False
+        if len(numbers) > 4 or int(numbers) == 0:
+            return False
+        return bool(suffix)
 
     
     def choose_best_ocr_result(self, images, ocr_mode="accurate"):
@@ -239,19 +267,20 @@ class PlateRecognition():
             ),
         )
 
-        return best["plate"], best["date"], best["best_score"]
+        if self.is_confident_ocr(best["plate"], best["date"], best["best_score"], ocr_mode):
+            return best["plate"], best["date"], best["best_score"]
+
+        return "", best["date"] if best["date"] else "", best["best_score"]
 
     
     def is_confident_ocr(self, plate_number, plate_date, score, ocr_mode="accurate"):
-        compact = re.sub(r'[^A-Z0-9]', '', (plate_number or "").upper())
-        valid_plate = bool(re.match(r'^[A-Z]{1,2}\d{1,4}[A-Z]{1,3}$', compact))
-        if not valid_plate:
+        if not self.is_valid_indonesian_plate(plate_number):
             return False
 
         threshold = {
-            "fast": 12.5,
+            "fast": 13.2,
             "balanced": 13.0,
-            "accurate": 13.5,
+            "accurate": 13.0,
         }.get(ocr_mode, 14.0)
         return score >= threshold or (score >= threshold - 1.0 and bool(plate_date))
 
