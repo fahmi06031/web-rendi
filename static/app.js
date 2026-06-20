@@ -10,6 +10,12 @@ const captureButton = document.querySelector("#captureButton");
 const uploadInput = document.querySelector("#uploadInput");
 const uploadButton = document.querySelector("#uploadButton");
 const addDataButton = document.querySelector("#addDataButton");
+const vehicleInfoPanel = document.querySelector("#vehicleInfoPanel");
+const vehicleOwnerText = document.querySelector("#vehicleOwnerText");
+const vehicleTaxText = document.querySelector("#vehicleTaxText");
+const newVehicleForm = document.querySelector("#newVehicleForm");
+const ownerNameInput = document.querySelector("#ownerNameInput");
+const plateDateInput = document.querySelector("#plateDateInput");
 const plateText = document.querySelector("#plateText");
 const dateText = document.querySelector("#dateText");
 const fpsText = document.querySelector("#fpsText");
@@ -72,6 +78,7 @@ function renderState(state) {
   dateText.textContent = state.date || "-";
   fpsText.textContent = Number(state.fps || 0).toFixed(1);
   statusText.textContent = state.status || "-";
+  renderVehicleState(state);
 
   thresholdValue.textContent = Number(state.threshold || thresholdInput.value).toFixed(2);
   if (state.camera !== undefined && cameraInput.value !== String(state.camera)) {
@@ -85,6 +92,39 @@ function renderState(state) {
     stillImage.src = `${state.lastImageUrl}?t=${Date.now()}`;
     stillPanel.hidden = false;
   }
+}
+
+function renderVehicleState(state) {
+  const vehicle = state.vehicle;
+  const status = state.registrationStatus;
+
+  if (vehicle) {
+    vehicleInfoPanel.hidden = false;
+    newVehicleForm.hidden = true;
+    vehicleOwnerText.textContent = vehicle.owner_name || "-";
+    const taxLabel = vehicle.tax_status?.label || "Tidak Diketahui";
+    vehicleTaxText.textContent = `Pajak: ${taxLabel} | Masa pajak: ${vehicle.plate_date || "-"}`;
+    addDataButton.textContent = "Data Sudah Terdaftar";
+    addDataButton.disabled = true;
+    return;
+  }
+
+  vehicleInfoPanel.hidden = true;
+  vehicleOwnerText.textContent = "-";
+  vehicleTaxText.textContent = "-";
+
+  if (status === "unregistered" && state.hasPendingDetection) {
+    newVehicleForm.hidden = false;
+    addDataButton.textContent = "Tambah Data Kendaraan";
+    if (!plateDateInput.value || plateDateInput.dataset.fromDetection !== state.date) {
+      plateDateInput.value = state.date && state.date !== "-" ? state.date : "";
+      plateDateInput.dataset.fromDetection = state.date || "";
+    }
+    return;
+  }
+
+  newVehicleForm.hidden = true;
+  addDataButton.textContent = "Tambah Data Kendaraan";
 }
 
 async function refreshStatus() {
@@ -199,13 +239,23 @@ uploadButton.addEventListener("click", async () => {
 });
 
 addDataButton.addEventListener("click", async () => {
+  if (!ownerNameInput.value.trim()) {
+    statusText.textContent = "Nama pemilik wajib diisi";
+    ownerNameInput.focus();
+    return;
+  }
+
   addDataButton.disabled = true;
   statusText.textContent = "Menambahkan data ke database...";
   try {
-    const state = await postJson("/api/detections/add", {});
+    const state = await postJson("/api/detections/add", {
+      ownerName: ownerNameInput.value.trim(),
+      plateDate: plateDateInput.value.trim(),
+    });
     if (state.ok === false) {
       statusText.textContent = state.message || "Data gagal ditambahkan";
     } else {
+      ownerNameInput.value = "";
       renderState(state);
       await refreshHistory();
     }

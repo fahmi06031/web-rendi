@@ -113,7 +113,18 @@
             <span>FPS</span>
             <b id="fpsText">0.0</b>
           </div>
-          <button id="addDataButton" class="secondary-button" type="button" disabled>Tambah Data</button>
+          <div id="vehicleInfoPanel" class="vehicle-info" hidden>
+            <span class="metric-label">Data Kendaraan</span>
+            <strong id="vehicleOwnerText">-</strong>
+            <p id="vehicleTaxText">-</p>
+          </div>
+          <div id="newVehicleForm" class="new-vehicle-form" hidden>
+            <label for="ownerNameInput">Nama pemilik</label>
+            <input id="ownerNameInput" type="text" placeholder="Masukkan nama pemilik">
+            <label for="plateDateInput">Masa pajak</label>
+            <input id="plateDateInput" type="text" placeholder="Contoh: 09-27">
+          </div>
+          <button id="addDataButton" class="secondary-button" type="button" disabled>Tambah Data Kendaraan</button>
         </section>
 
         <section id="stillPanel" class="still-panel" aria-label="Preview hasil gambar" hidden>

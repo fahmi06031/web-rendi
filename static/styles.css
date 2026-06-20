@@ -296,6 +296,7 @@ output {
 
 input[type="number"],
 .control-group select,
+.new-vehicle-form input,
 .login-form input {
   width: 100%;
   height: 42px;
@@ -309,6 +310,7 @@ input[type="number"],
 
 input[type="number"]:focus,
 .control-group select:focus,
+.new-vehicle-form input:focus,
 .login-form input:focus {
   border-color: var(--primary);
   background: #ffffff;
@@ -423,6 +425,32 @@ button:disabled {
 
 .result-panel .date-text {
   font-size: 26px;
+}
+
+.vehicle-info,
+.new-vehicle-form {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel-soft);
+}
+
+.vehicle-info strong {
+  margin: 0;
+  font-size: 18px;
+}
+
+.vehicle-info p {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.vehicle-info[hidden],
+.new-vehicle-form[hidden] {
+  display: none;
 }
 
 .fps-row {

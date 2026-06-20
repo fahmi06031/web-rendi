@@ -64,10 +64,25 @@ def init_db():
             )
             cursor.execute(
                 """
+                CREATE TABLE IF NOT EXISTS vehicles (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    plate_key VARCHAR(32) NOT NULL UNIQUE,
+                    plate_number VARCHAR(32) NOT NULL,
+                    owner_name VARCHAR(120) NOT NULL,
+                    plate_date VARCHAR(16),
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL,
+                    INDEX idx_vehicles_plate_key (plate_key)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS detections (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     plate_number VARCHAR(32) NOT NULL,
                     plate_date VARCHAR(16),
+                    owner_name VARCHAR(120),
                     source VARCHAR(24) NOT NULL,
                     image_url VARCHAR(255) NOT NULL,
                     threshold DOUBLE NOT NULL,
@@ -77,6 +92,7 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """
             )
+            ensure_column(cursor, "detections", "owner_name", "VARCHAR(120)")
             cursor.execute("SELECT 1 FROM users WHERE username = %s", ("admin",))
             admin_exists = cursor.fetchone()
             if admin_exists is None:
@@ -84,6 +100,19 @@ def init_db():
                     "INSERT INTO users (username, password_hash, created_at) VALUES (%s, %s, %s)",
                     ("admin", generate_password_hash("admin123"), datetime.now()),
                 )
+
+
+def ensure_column(cursor, table_name, column_name, definition):
+    cursor.execute(
+        """
+        SELECT 1
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND COLUMN_NAME = %s
+        """,
+        (DB_CONFIG["database"], table_name, column_name),
+    )
+    if cursor.fetchone() is None:
+        cursor.execute(f"ALTER TABLE `{table_name}` ADD COLUMN `{column_name}` {definition}")
 
 
 def login_required(view):
@@ -98,17 +127,79 @@ def login_required(view):
     return wrapped
 
 
-def save_detection(plate_number, plate_date, source, image_url, threshold):
+def normalize_plate_key(plate_number):
+    return re.sub(r'[^A-Z0-9]', '', (plate_number or "").upper())
+
+
+def find_vehicle_by_plate(plate_number):
+    plate_key = normalize_plate_key(plate_number)
+    if not plate_key:
+        return None
+
     with get_mysql_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO detections (plate_number, plate_date, source, image_url, threshold, created_at)
+                SELECT id, plate_key, plate_number, owner_name, plate_date, created_at, updated_at
+                FROM vehicles
+                WHERE plate_key = %s
+                LIMIT 1
+                """,
+                (plate_key,),
+            )
+            row = cursor.fetchone()
+
+    if row is None:
+        return None
+
+    row["tax_status"] = get_tax_status(row.get("plate_date"))
+    for key in ("created_at", "updated_at"):
+        if isinstance(row.get(key), datetime):
+            row[key] = row[key].isoformat(timespec="seconds")
+    return row
+
+
+def save_vehicle(plate_number, owner_name, plate_date):
+    plate_key = normalize_plate_key(plate_number)
+    if not plate_key:
+        raise ValueError("Nomor plat tidak valid")
+
+    owner_name = (owner_name or "").strip()
+    if not owner_name:
+        raise ValueError("Nama pemilik wajib diisi")
+
+    normalized_date = plate_date if plate_date not in ("", "-") else None
+    now = datetime.now()
+    with get_mysql_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO vehicles (plate_key, plate_number, owner_name, plate_date, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    plate_number = VALUES(plate_number),
+                    owner_name = VALUES(owner_name),
+                    plate_date = VALUES(plate_date),
+                    updated_at = VALUES(updated_at)
+                """,
+                (plate_key, plate_number, owner_name, normalized_date, now, now),
+            )
+
+    return find_vehicle_by_plate(plate_number)
+
+
+def save_detection(plate_number, plate_date, source, image_url, threshold, owner_name=None):
+    with get_mysql_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO detections (plate_number, plate_date, owner_name, source, image_url, threshold, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     plate_number,
                     plate_date if plate_date not in ("", "-") else None,
+                    owner_name if owner_name not in ("", "-") else None,
                     source,
                     image_url,
                     float(threshold),
@@ -122,7 +213,7 @@ def fetch_recent_detections(limit=25):
         with conn.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, plate_number, plate_date, source, image_url, threshold, created_at
+                SELECT id, plate_number, plate_date, owner_name, source, image_url, threshold, created_at
                 FROM detections
                 ORDER BY id DESC
                 LIMIT %s
@@ -215,6 +306,8 @@ class WebPlateDetector:
         self.backend_name = "-"
         self.plate_text = "-"
         self.plate_date = "-"
+        self.vehicle_info = None
+        self.registration_status = "idle"
         self.fps = 0.0
         self.frame_count = 0
         self.fps_started_at = time.time()
@@ -259,6 +352,8 @@ class WebPlateDetector:
             self.latest_output_frame = None
             self.plate_text = "-"
             self.plate_date = "-"
+            self.vehicle_info = None
+            self.registration_status = "idle"
             self.fps = 0.0
             self.backend_name = backend_name
             self.running = True
@@ -411,6 +506,8 @@ class WebPlateDetector:
             self.latest_output_frame = None
             self.camera_thread = None
             self.status = "Kamera berhenti"
+            self.vehicle_info = None
+            self.registration_status = "idle"
 
         if capture is not None:
             with self.camera_lock:
@@ -513,6 +610,8 @@ class WebPlateDetector:
                 "status": self.status,
                 "plate": self.plate_text,
                 "date": self.plate_date,
+                "vehicle": self.vehicle_info,
+                "registrationStatus": self.registration_status,
                 "fps": round(self.fps, 1),
                 "lastImageUrl": self.last_image_url,
                 "hasPendingDetection": self.pending_detection is not None,
@@ -561,10 +660,17 @@ class WebPlateDetector:
                 output, plate_text = result
                 plate_date = "-"
 
+            vehicle, registration_status = self._lookup_vehicle(plate_text)
             with self.lock:
                 self.latest_output_frame = output
                 self.plate_text = plate_text or "-"
                 self.plate_date = plate_date or "-"
+                self.vehicle_info = vehicle
+                self.registration_status = registration_status
+                if vehicle:
+                    self.status = f"Plat terdaftar: {vehicle['owner_name']}"
+                elif self._has_plate_text(plate_text):
+                    self.status = "Plat belum terdaftar"
         except Exception as exc:
             with self.lock:
                 self.status = f"Deteksi error: {exc}"
@@ -641,17 +747,25 @@ class WebPlateDetector:
             output_path = OUTPUT_DIR / filename
             cv2.imwrite(str(output_path), output)
             image_url = f"/outputs/{filename}"
+            vehicle, registration_status = self._lookup_vehicle(plate_text)
 
             with self.lock:
                 if source == "capture":
                     self.latest_output_frame = output
                 self.plate_text = plate_text or "-"
                 self.plate_date = plate_date or "-"
+                self.vehicle_info = vehicle
+                self.registration_status = registration_status
                 self.last_image_url = image_url
-                self.status = "Gambar selesai diproses"
+                if vehicle:
+                    self.status = f"Plat terdaftar: {vehicle['owner_name']}"
+                elif self._has_plate_text(plate_text):
+                    self.status = "Plat belum terdaftar, lengkapi data pemilik"
+                else:
+                    self.status = "Gambar selesai diproses"
 
             pending = None
-            if source in ("capture", "upload") and self._has_plate_text(plate_text):
+            if source in ("capture", "upload") and self._has_plate_text(plate_text) and vehicle is None:
                 pending = {
                     "plate_number": plate_text,
                     "plate_date": plate_date,
@@ -678,7 +792,7 @@ class WebPlateDetector:
             **response,
         }
 
-    def save_pending_detection(self):
+    def save_pending_detection(self, owner_name=None, plate_date=None):
         with self.lock:
             pending = dict(self.pending_detection) if self.pending_detection else None
 
@@ -689,24 +803,46 @@ class WebPlateDetector:
                 "message": "Tidak ada hasil valid untuk ditambahkan",
             }
 
+        owner_name = (owner_name or "").strip()
+        if not owner_name:
+            return False, {
+                **self.get_status(),
+                "ok": False,
+                "message": "Nama pemilik wajib diisi",
+            }
+
+        selected_date = plate_date if plate_date not in (None, "") else pending["plate_date"]
+        vehicle = save_vehicle(pending["plate_number"], owner_name, selected_date)
         save_detection(
             pending["plate_number"],
-            pending["plate_date"],
+            selected_date,
             pending["source"],
             pending["image_url"],
             pending["threshold"],
+            owner_name=owner_name,
         )
 
         with self.lock:
             self.pending_detection = None
-            self.status = "Data berhasil ditambahkan ke database"
+            self.vehicle_info = vehicle
+            self.registration_status = "registered"
+            self.plate_date = selected_date or "-"
+            self.status = "Data kendaraan berhasil ditambahkan"
 
         return True, {
             **self.get_status(),
             "ok": True,
-            "message": "Data berhasil ditambahkan ke database",
+            "message": "Data kendaraan berhasil ditambahkan",
             "saved": True,
         }
+
+    def _lookup_vehicle(self, plate_text):
+        if not self._has_plate_text(plate_text):
+            return None, "idle"
+        vehicle = find_vehicle_by_plate(plate_text)
+        if vehicle is not None:
+            return vehicle, "registered"
+        return None, "unregistered"
 
     def _has_plate_text(self, plate_text):
         value = (plate_text or "").strip().lower()
@@ -926,7 +1062,11 @@ def upload():
 @app.route("/api/detections/add", methods=["POST"])
 @login_required
 def add_detection():
-    ok, data = detector_state.save_pending_detection()
+    data = request.get_json(silent=True) or {}
+    ok, data = detector_state.save_pending_detection(
+        owner_name=data.get("ownerName"),
+        plate_date=data.get("plateDate"),
+    )
     return jsonify(data), 200 if ok else 400
 
 

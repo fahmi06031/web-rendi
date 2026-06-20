@@ -47,6 +47,7 @@
             <tr>
               <th>Waktu</th>
               <th>Nomor Plat</th>
+              <th>Pemilik</th>
               <th>Tanggal</th>
               <th>Status Pajak</th>
               <th>Sumber</th>
@@ -59,6 +60,7 @@
               <tr>
                 <td>{{ item.created_at }}</td>
                 <td>{{ item.plate_number }}</td>
+                <td>{{ item.owner_name or "-" }}</td>
                 <td>{{ item.plate_date or "-" }}</td>
                 <td>
                   <span class="tax-badge {{ item.tax_status.class }}">
@@ -71,7 +73,7 @@
               </tr>
             {% else %}
               <tr>
-                <td colspan="7">Belum ada hasil deteksi tersimpan.</td>
+                <td colspan="8">Belum ada hasil deteksi tersimpan.</td>
               </tr>
             {% endfor %}
           </tbody>
