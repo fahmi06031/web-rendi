@@ -188,6 +188,12 @@ def save_vehicle(plate_number, owner_name, plate_date):
     return find_vehicle_by_plate(plate_number)
 
 
+def sync_vehicle_from_detection(plate_number, owner_name, plate_date):
+    if not plate_number or not owner_name:
+        return None
+    return save_vehicle(plate_number, owner_name, plate_date)
+
+
 def save_detection(plate_number, plate_date, source, image_url, threshold, owner_name=None):
     with get_mysql_connection() as conn:
         with conn.cursor() as cursor:
@@ -226,6 +232,84 @@ def fetch_recent_detections(limit=25):
                     row["created_at"] = row["created_at"].isoformat(timespec="seconds")
                 row["tax_status"] = get_tax_status(row.get("plate_date"))
             return rows
+
+
+def update_detection(detection_id, plate_number, owner_name, plate_date):
+    plate_number = (plate_number or "").strip().upper()
+    owner_name = (owner_name or "").strip()
+    plate_date = (plate_date or "").strip()
+
+    if not plate_number:
+        raise ValueError("Nomor plat wajib diisi")
+    if not owner_name:
+        raise ValueError("Nama pemilik wajib diisi")
+
+    with get_mysql_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, plate_number, source, image_url, threshold
+                FROM detections
+                WHERE id = %s
+                LIMIT 1
+                """,
+                (detection_id,),
+            )
+            existing = cursor.fetchone()
+            if existing is None:
+                return False
+
+            cursor.execute(
+                """
+                UPDATE detections
+                SET plate_number = %s, owner_name = %s, plate_date = %s
+                WHERE id = %s
+                """,
+                (
+                    plate_number,
+                    owner_name,
+                    plate_date if plate_date not in ("", "-") else None,
+                    detection_id,
+                ),
+            )
+
+            old_plate_key = normalize_plate_key(existing["plate_number"])
+            new_plate_key = normalize_plate_key(plate_number)
+            if old_plate_key and old_plate_key != new_plate_key:
+                cursor.execute(
+                    "SELECT COUNT(*) AS total FROM detections WHERE REPLACE(REPLACE(UPPER(plate_number), ' ', ''), '-', '') = %s",
+                    (old_plate_key,),
+                )
+                remaining = cursor.fetchone()["total"]
+                if remaining == 0:
+                    cursor.execute("DELETE FROM vehicles WHERE plate_key = %s", (old_plate_key,))
+
+    sync_vehicle_from_detection(plate_number, owner_name, plate_date)
+    return True
+
+
+def delete_detection(detection_id):
+    with get_mysql_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT plate_number FROM detections WHERE id = %s LIMIT 1",
+                (detection_id,),
+            )
+            existing = cursor.fetchone()
+            if existing is None:
+                return False
+
+            plate_key = normalize_plate_key(existing["plate_number"])
+            cursor.execute("DELETE FROM detections WHERE id = %s", (detection_id,))
+            cursor.execute(
+                "SELECT COUNT(*) AS total FROM detections WHERE REPLACE(REPLACE(UPPER(plate_number), ' ', ''), '-', '') = %s",
+                (plate_key,),
+            )
+            remaining = cursor.fetchone()["total"]
+            if remaining == 0 and plate_key:
+                cursor.execute("DELETE FROM vehicles WHERE plate_key = %s", (plate_key,))
+
+    return True
 
 
 def get_tax_status(plate_date):
@@ -1068,6 +1152,46 @@ def add_detection():
         plate_date=data.get("plateDate"),
     )
     return jsonify(data), 200 if ok else 400
+
+
+@app.route("/api/detections/<int:detection_id>", methods=["PUT"])
+@login_required
+def edit_detection(detection_id):
+    data = request.get_json(silent=True) or {}
+    try:
+        updated = update_detection(
+            detection_id,
+            data.get("plateNumber"),
+            data.get("ownerName"),
+            data.get("plateDate"),
+        )
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+
+    if not updated:
+        return jsonify({"ok": False, "message": "Data tidak ditemukan"}), 404
+
+    return jsonify({
+        "ok": True,
+        "message": "Data berhasil diperbarui",
+        "stats": fetch_detection_stats(),
+        "detections": fetch_recent_detections(limit=100),
+    })
+
+
+@app.route("/api/detections/<int:detection_id>", methods=["DELETE"])
+@login_required
+def remove_detection(detection_id):
+    deleted = delete_detection(detection_id)
+    if not deleted:
+        return jsonify({"ok": False, "message": "Data tidak ditemukan"}), 404
+
+    return jsonify({
+        "ok": True,
+        "message": "Data berhasil dihapus",
+        "stats": fetch_detection_stats(),
+        "detections": fetch_recent_detections(limit=100),
+    })
 
 
 def parse_args():

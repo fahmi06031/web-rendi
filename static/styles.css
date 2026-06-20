@@ -531,7 +531,7 @@ button:disabled {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 840px;
+  min-width: 980px;
 }
 
 th,
@@ -558,6 +558,104 @@ tbody tr:hover {
 
 tr:last-child td {
   border-bottom: 0;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.table-action {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--primary-dark);
+  box-shadow: none;
+  font-size: 13px;
+}
+
+.table-action:hover:not(:disabled) {
+  background: #f1fbfa;
+  box-shadow: none;
+}
+
+.danger-action {
+  color: var(--danger);
+}
+
+.danger-action:hover:not(:disabled) {
+  border-color: rgba(220, 38, 38, 0.32);
+  background: #fff1f2;
+}
+
+.edit-dialog {
+  width: min(460px, calc(100vw - 32px));
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.22);
+}
+
+.edit-dialog::backdrop {
+  background: rgba(15, 23, 42, 0.38);
+  backdrop-filter: blur(3px);
+}
+
+.edit-dialog form {
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+}
+
+.dialog-heading,
+.dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dialog-actions {
+  justify-content: end;
+}
+
+.edit-dialog input {
+  width: 100%;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel-soft);
+  color: var(--ink);
+  outline: none;
+}
+
+.edit-dialog input:focus {
+  border-color: var(--primary);
+  background: #ffffff;
+  box-shadow: 0 0 0 4px rgba(15, 159, 154, 0.12);
+}
+
+.icon-close {
+  width: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--panel-soft);
+  color: var(--muted);
+  box-shadow: none;
+}
+
+.form-message {
+  min-height: 20px;
+  margin: 0;
+  color: var(--danger);
+  font-weight: 800;
 }
 
 .login-page {

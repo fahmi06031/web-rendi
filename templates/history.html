@@ -53,6 +53,7 @@
               <th>Sumber</th>
               <th>Threshold</th>
               <th>Gambar</th>
+              <th>Aksi</th>
             </tr>
           </thead>
           <tbody>
@@ -70,16 +71,127 @@
                 <td>{{ item.source }}</td>
                 <td>{{ "%.2f"|format(item.threshold) }}</td>
                 <td><a href="{{ item.image_url }}" target="_blank" rel="noreferrer">Lihat</a></td>
+                <td>
+                  <div class="row-actions">
+                    <button
+                      class="table-action edit-action"
+                      type="button"
+                      data-id="{{ item.id }}"
+                      data-plate="{{ item.plate_number }}"
+                      data-owner="{{ item.owner_name or '' }}"
+                      data-date="{{ item.plate_date or '' }}"
+                    >Edit</button>
+                    <button
+                      class="table-action danger-action delete-action"
+                      type="button"
+                      data-id="{{ item.id }}"
+                      data-plate="{{ item.plate_number }}"
+                    >Hapus</button>
+                  </div>
+                </td>
               </tr>
             {% else %}
               <tr>
-                <td colspan="8">Belum ada hasil deteksi tersimpan.</td>
+                <td colspan="9">Belum ada hasil deteksi tersimpan.</td>
               </tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
     </section>
+
+    <dialog id="editDialog" class="edit-dialog">
+      <form id="editForm" method="dialog">
+        <div class="dialog-heading">
+          <h2>Edit Data</h2>
+          <button id="closeEditDialog" class="icon-close" type="button" aria-label="Tutup">x</button>
+        </div>
+        <input id="editIdInput" type="hidden">
+        <label for="editPlateInput">Nomor plat</label>
+        <input id="editPlateInput" type="text" required>
+        <label for="editOwnerInput">Nama pemilik</label>
+        <input id="editOwnerInput" type="text" required>
+        <label for="editDateInput">Masa pajak</label>
+        <input id="editDateInput" type="text" placeholder="Contoh: 05-26">
+        <p id="editMessage" class="form-message"></p>
+        <div class="dialog-actions">
+          <button class="secondary-button" id="cancelEditButton" type="button">Batal</button>
+          <button type="submit">Simpan</button>
+        </div>
+      </form>
+    </dialog>
   </main>
+  <script>
+    const editDialog = document.querySelector("#editDialog");
+    const editForm = document.querySelector("#editForm");
+    const editIdInput = document.querySelector("#editIdInput");
+    const editPlateInput = document.querySelector("#editPlateInput");
+    const editOwnerInput = document.querySelector("#editOwnerInput");
+    const editDateInput = document.querySelector("#editDateInput");
+    const editMessage = document.querySelector("#editMessage");
+
+    function openEditDialog(button) {
+      editIdInput.value = button.dataset.id;
+      editPlateInput.value = button.dataset.plate || "";
+      editOwnerInput.value = button.dataset.owner || "";
+      editDateInput.value = button.dataset.date || "";
+      editMessage.textContent = "";
+      editDialog.showModal();
+    }
+
+    async function sendJson(url, method, body) {
+      const response = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || "Proses gagal");
+      }
+      return data;
+    }
+
+    document.querySelectorAll(".edit-action").forEach((button) => {
+      button.addEventListener("click", () => openEditDialog(button));
+    });
+
+    document.querySelectorAll(".delete-action").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const plate = button.dataset.plate || "data ini";
+        const confirmed = window.confirm(`Hapus data ${plate}?`);
+        if (!confirmed) {
+          return;
+        }
+
+        button.disabled = true;
+        try {
+          await sendJson(`/api/detections/${button.dataset.id}`, "DELETE");
+          window.location.reload();
+        } catch (error) {
+          alert(error.message);
+          button.disabled = false;
+        }
+      });
+    });
+
+    document.querySelector("#closeEditDialog").addEventListener("click", () => editDialog.close());
+    document.querySelector("#cancelEditButton").addEventListener("click", () => editDialog.close());
+
+    editForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      editMessage.textContent = "Menyimpan perubahan...";
+      try {
+        await sendJson(`/api/detections/${editIdInput.value}`, "PUT", {
+          plateNumber: editPlateInput.value.trim(),
+          ownerName: editOwnerInput.value.trim(),
+          plateDate: editDateInput.value.trim(),
+        });
+        window.location.reload();
+      } catch (error) {
+        editMessage.textContent = error.message;
+      }
+    });
+  </script>
 </body>
 </html>
