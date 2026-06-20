@@ -104,7 +104,7 @@ class PlateRecognition():
             xs = [point[0] for point in box] if box else [0]
             ys = [point[1] for point in box] if box else [0]
             clean = re.sub(r'[^A-Z0-9]', '', raw_value)
-            date_match = re.search(r'\d{1,2}[-./]\d{1,2}', raw_value)
+            date_match = re.search(r'(?<!\d)(0?[1-9]|1[0-2])[-./](\d{2})(?!\d)', raw_value)
             tokens.append({
                 "raw": raw_value,
                 "clean": clean,
@@ -121,14 +121,30 @@ class PlateRecognition():
     
     def choose_plate_date(self, tokens):
         dates = [token["date"] for token in tokens if token.get("date")]
-        return dates[0] if dates else ""
+        if dates:
+            return dates[0]
+
+        digit_tokens = [token for token in tokens if re.fullmatch(r'\d{2}', token["clean"])]
+        digit_tokens = sorted(digit_tokens, key=lambda item: item["x"])
+        for left, right in zip(digit_tokens, digit_tokens[1:]):
+            month = int(left["clean"])
+            same_row = abs(left["y"] - right["y"]) < max(left["height"], right["height"], 1)
+            if 1 <= month <= 12 and same_row:
+                return f"{left['clean']}-{right['clean']}"
+        return ""
 
     
     def build_plate_candidates(self, tokens):
+        max_token_height = max((token["height"] for token in tokens), default=0)
         usable_tokens = [
             token for token in tokens
-            if token["clean"] and not token["is_date"] and not self.is_noise_token(token["clean"])
+            if token["clean"] and not token["is_date"] and not self.is_noise_token(token)
         ]
+        if max_token_height:
+            usable_tokens = [
+                token for token in usable_tokens
+                if token["height"] >= max_token_height * 0.35 or token["clean"] in {"8", "B"}
+            ]
         usable_tokens = sorted(usable_tokens, key=lambda item: item["x"])
         candidates = {}
 
@@ -154,7 +170,31 @@ class PlateRecognition():
 
     
     def add_candidate(self, candidates, raw_value, confidence, token_count, height):
+        formatted_values = self.generate_plate_variants(raw_value)
+        for formatted, variant_penalty in formatted_values:
+            self.add_formatted_candidate(candidates, raw_value, formatted, confidence, token_count, height, variant_penalty)
+
+    
+    def generate_plate_variants(self, raw_value):
         formatted = self.format_plate_number(raw_value)
+        if not self.is_valid_indonesian_plate(formatted):
+            return []
+
+        variants = [(formatted, 0.0)]
+        compact = re.sub(r'[^A-Z0-9]', '', formatted.upper())
+        match = re.match(r'^([A-Z]{1,2})(\d{1,4})([A-Z]{1,3})$', compact)
+        if not match:
+            return variants
+
+        prefix, numbers, suffix = match.groups()
+        if "7" in numbers:
+            alt_numbers = numbers.replace("7", "1")
+            if alt_numbers != numbers and int(alt_numbers) > 0:
+                variants.append((f"{prefix} {alt_numbers} {suffix}", 1.2))
+        return variants
+
+    
+    def add_formatted_candidate(self, candidates, raw_value, formatted, confidence, token_count, height, variant_penalty=0.0):
         if not self.is_valid_indonesian_plate(formatted):
             return
 
@@ -177,6 +217,7 @@ class PlateRecognition():
             score += 0.5
         if len(numbers) >= 3:
             score += 0.8
+        score -= variant_penalty
 
         key = compact_plate
         if key not in candidates or candidates[key]["score"] < score:
@@ -186,8 +227,12 @@ class PlateRecognition():
             }
 
     
-    def is_noise_token(self, value):
+    def is_noise_token(self, token):
+        value = token["clean"] if isinstance(token, dict) else str(token)
+        height = token.get("height", 0) if isinstance(token, dict) else 0
         if len(value) <= 1 and not value.isalpha():
+            return value != "8" or height < 35
+        if value.isdigit() and len(value) > 4:
             return True
         if value in {"CNN", "CWN", "OCW", "CCW", "CW", "WWW"}:
             return True
@@ -225,7 +270,7 @@ class PlateRecognition():
                         raw_prefix = segment[:prefix_len]
                         raw_number = segment[prefix_len:prefix_len + number_len]
                         raw_suffix = segment[prefix_len + number_len:]
-                        if not any(char.isalpha() for char in raw_prefix):
+                        if not any(char.isalpha() for char in raw_prefix) and raw_prefix not in {"8"}:
                             continue
 
                         prefix = self.correct_expected_letters(raw_prefix)
@@ -325,7 +370,7 @@ class PlateRecognition():
             if not plate_number and not plate_date:
                 continue
 
-            if self.is_confident_ocr(plate_number, plate_date, score, ocr_mode):
+            if ocr_mode == "fast" and self.is_confident_ocr(plate_number, plate_date, score, ocr_mode):
                 return plate_number, plate_date, score
 
             key = re.sub(r'[^A-Z0-9]', '', plate_number.upper())
