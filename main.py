@@ -57,8 +57,12 @@ if __name__ == '__main__':
             process_this_frame = not process_this_frame
 
             # Preprocess results
-            frame, license_num = anpr.anpr(frame, args.threshold)
+            result = anpr.anpr(frame, args.threshold)
+            frame, license_num = result[:2]
+            plate_date = result[2] if len(result) > 2 else ""
             print(f"license: {license_num}")
+            if plate_date:
+                print(f"date: {plate_date}")
             # Stop count fps
             fps.stop()
             # Display the resulting image
@@ -73,8 +77,12 @@ if __name__ == '__main__':
         cv2.destroyAllWindows()
     else:
         img = cv2.imread(args.source)
-        output, license_num = anpr.anpr(img, args.threshold)
+        result = anpr.anpr(img, args.threshold)
+        output, license_num = result[:2]
+        plate_date = result[2] if len(result) > 2 else ""
         print(f"license: {license_num}")
+        if plate_date:
+            print(f"date: {plate_date}")
         
         cv2.imshow("Result", output)
         cv2.waitKey(0) & 0xFF == ord('q')

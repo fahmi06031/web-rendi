@@ -53,6 +53,41 @@ use webcam:
 image inference: 
 	python main.py --source "./img/Cars1.png" --threshold 0.55
 
+Web UI kamera laptop:
+	.\.venv\Scripts\python.exe web_app.py
+
+Buka di browser:
+	http://127.0.0.1:5000
+
+Login default:
+	username: admin
+	password: admin123
+
+Fitur Web UI:
+	- halaman login
+	- dashboard statistik dan riwayat deteksi
+	- preview kamera laptop
+	- deteksi plat realtime
+	- ambil gambar dari kamera
+	- upload gambar dari file
+	- hasil nomor plat dan tanggal terpisah
+	- hasil dari Ambil Gambar dan Proses Upload bisa disimpan ke MySQL lewat tombol Tambah Data
+
+Web UI dengan opsi:
+	.\.venv\Scripts\python.exe web_app.py --camera 0 --threshold 0.55 --interval 700
+
+Database:
+	MySQL
+
+Konfigurasi database MySQL via environment variable:
+	PLATE_DB_HOST=127.0.0.1
+	PLATE_DB_PORT=3306
+	PLATE_DB_USER=root
+	PLATE_DB_PASSWORD=
+	PLATE_DB_NAME=plate_detection
+
+Database dan tabel akan dibuat otomatis jika user MySQL punya akses CREATE DATABASE.
+
 ## Automatic Number Plate Recognition ##
 optional arguments:
 	--source		webcam or image_path.

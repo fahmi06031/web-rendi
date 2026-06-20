@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deteksi Plat Nomor</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body class="app-page">
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">ANPR Web</p>
+      <h1>Dashboard Deteksi Plat</h1>
+    </div>
+    <nav>
+      <a class="active" href="{{ url_for('index') }}">Deteksi</a>
+      <a href="{{ url_for('history_page') }}">Riwayat</a>
+      <span>{{ username }}</span>
+      <a href="{{ url_for('logout') }}">Logout</a>
+    </nav>
+  </header>
+
+  <main class="dashboard-shell">
+    <section class="summary-grid" aria-label="Ringkasan deteksi">
+      <article>
+        <span>Total Tersimpan</span>
+        <strong id="totalDetections">{{ stats.total }}</strong>
+      </article>
+      <article>
+        <span>Hari Ini</span>
+        <strong id="todayDetections">{{ stats.today }}</strong>
+      </article>
+      <article>
+        <span>Plat Terakhir</span>
+        <strong id="latestPlate">{{ stats.latest }}</strong>
+      </article>
+    </section>
+
+    <section class="workbench">
+      <section class="video-section" aria-label="Preview kamera">
+        <div class="video-frame">
+          <img id="videoStream" src="{{ url_for('video') }}" alt="Preview kamera deteksi plat">
+        </div>
+      </section>
+
+      <aside class="control-panel" aria-label="Kontrol deteksi">
+        <header class="panel-header">
+          <h2>Kontrol</h2>
+        </header>
+
+        <section class="control-group">
+          <label for="cameraInput">Kamera</label>
+          <select id="cameraInput">
+            <option value="0">Kamera Device</option>
+            <option value="1">USB Camera</option>
+          </select>
+        </section>
+
+        <section class="control-group">
+          <div class="label-row">
+            <label for="thresholdInput">Threshold deteksi</label>
+            <output id="thresholdValue">0.55</output>
+          </div>
+          <input id="thresholdInput" type="range" min="0.10" max="0.95" step="0.01" value="0.55">
+        </section>
+
+        <section class="control-group">
+          <label for="intervalInput">Jeda deteksi</label>
+          <div class="inline-field">
+            <input id="intervalInput" type="number" min="100" max="5000" step="100" value="700">
+            <span>ms</span>
+          </div>
+        </section>
+
+        <section class="control-group">
+          <label for="ocrModeInput">Mode OCR gambar</label>
+          <select id="ocrModeInput">
+            <option value="fast">Cepat</option>
+            <option value="balanced">Seimbang</option>
+            <option value="accurate" selected>Akurat</option>
+          </select>
+        </section>
+
+        <label class="check-row">
+          <input id="cudaInput" type="checkbox">
+          <span>Gunakan CUDA/GPU</span>
+        </label>
+
+        <div class="button-stack">
+          <button id="cameraButton" type="button">Mulai Kamera</button>
+          <button id="detectButton" type="button" disabled>Mulai Deteksi</button>
+        </div>
+
+        <section class="image-actions" aria-label="Ambil dan upload gambar">
+          <button id="captureButton" class="secondary-button" type="button" disabled>Ambil Gambar Kamera</button>
+          <label class="file-picker" for="uploadInput">
+            <span>Upload Gambar</span>
+            <input id="uploadInput" type="file" accept="image/*">
+          </label>
+          <button id="uploadButton" class="secondary-button" type="button">Proses Upload</button>
+        </section>
+
+        <section class="result-panel" aria-label="Hasil deteksi">
+          <div>
+            <span class="metric-label">Nomor Plat</span>
+            <strong id="plateText">-</strong>
+          </div>
+          <div>
+            <span class="metric-label">Tanggal</span>
+            <strong id="dateText" class="date-text">-</strong>
+          </div>
+          <div class="fps-row">
+            <span>FPS</span>
+            <b id="fpsText">0.0</b>
+          </div>
+          <button id="addDataButton" class="secondary-button" type="button" disabled>Tambah Data</button>
+        </section>
+
+        <section id="stillPanel" class="still-panel" aria-label="Preview hasil gambar" hidden>
+          <span class="metric-label">Hasil Gambar</span>
+          <img id="stillImage" alt="Hasil deteksi gambar">
+        </section>
+
+        <section class="status-panel" aria-label="Status sistem">
+          <span class="metric-label">Status</span>
+          <p id="statusText">Kamera belum aktif</p>
+        </section>
+      </aside>
+    </section>
+
+  </main>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

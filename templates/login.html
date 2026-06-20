@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login Deteksi Plat</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body class="login-page">
+  <main class="login-shell">
+    <section class="login-panel">
+      <p class="eyebrow">ANPR Web</p>
+      <h1>Login Sistem</h1>
+      <form method="post" class="login-form">
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" autocomplete="username" required autofocus>
+
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+
+        {% if error %}
+          <p class="form-error">{{ error }}</p>
+        {% endif %}
+
+        <button type="submit">Masuk</button>
+      </form>
+      <p class="login-hint">Default: admin / admin123</p>
+    </section>
+  </main>
+</body>
+</html>

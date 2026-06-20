@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Riwayat Deteksi Plat</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body class="app-page">
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">ANPR Web</p>
+      <h1>Riwayat Deteksi</h1>
+    </div>
+    <nav>
+      <a href="{{ url_for('index') }}">Deteksi</a>
+      <a class="active" href="{{ url_for('history_page') }}">Riwayat</a>
+      <span>{{ username }}</span>
+      <a href="{{ url_for('logout') }}">Logout</a>
+    </nav>
+  </header>
+
+  <main class="dashboard-shell">
+    <section class="summary-grid" aria-label="Ringkasan deteksi">
+      <article>
+        <span>Total Tersimpan</span>
+        <strong>{{ stats.total }}</strong>
+      </article>
+      <article>
+        <span>Hari Ini</span>
+        <strong>{{ stats.today }}</strong>
+      </article>
+      <article>
+        <span>Plat Terakhir</span>
+        <strong>{{ stats.latest }}</strong>
+      </article>
+    </section>
+
+    <section class="history-panel" aria-label="Riwayat deteksi">
+      <div class="section-heading">
+        <h2>Data Tersimpan</h2>
+        <span>Hasil yang sudah dikonfirmasi lewat tombol Tambah Data</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Waktu</th>
+              <th>Nomor Plat</th>
+              <th>Tanggal</th>
+              <th>Status Pajak</th>
+              <th>Sumber</th>
+              <th>Threshold</th>
+              <th>Gambar</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in detections %}
+              <tr>
+                <td>{{ item.created_at }}</td>
+                <td>{{ item.plate_number }}</td>
+                <td>{{ item.plate_date or "-" }}</td>
+                <td>
+                  <span class="tax-badge {{ item.tax_status.class }}">
+                    {{ item.tax_status.label }}
+                  </span>
+                </td>
+                <td>{{ item.source }}</td>
+                <td>{{ "%.2f"|format(item.threshold) }}</td>
+                <td><a href="{{ item.image_url }}" target="_blank" rel="noreferrer">Lihat</a></td>
+              </tr>
+            {% else %}
+              <tr>
+                <td colspan="7">Belum ada hasil deteksi tersimpan.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

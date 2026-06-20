@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import argparse
 import onnxruntime as ort
+import re
 from collections import OrderedDict, namedtuple
 
 from utils import correct_skew, resize_img
@@ -16,13 +17,326 @@ class PlateRecognition():
         self.session = ort.InferenceSession(self.model_path, providers=self.providers)
         print("Onnx runtime running with plate detector model...")
         
-        self.reader = easyocr.Reader(['en'], gpu=cuda, quantize=True)
+        self.reader = easyocr.Reader(['en'], gpu=cuda, quantize=True, verbose=False)
         self.enhancer = enhancer
     
     
-    def extract_text(self, img):
-        text = self.reader.readtext(img, allowlist='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ')
-        return text
+    def extract_text(self, img, ocr_mode="accurate"):
+        allowlist = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-./'
+        if ocr_mode == "fast":
+            try:
+                return self.reader.readtext(
+                    img,
+                    allowlist=allowlist,
+                    decoder='greedy',
+                    batch_size=1,
+                    detail=1,
+                    paragraph=False,
+                    text_threshold=0.55,
+                    low_text=0.35,
+                    link_threshold=0.35,
+                    mag_ratio=1.0,
+                )
+            except TypeError:
+                return self.reader.readtext(img, allowlist=allowlist)
+
+        beam_width = 5 if ocr_mode == "balanced" else 10
+        mag_ratio = 1.2 if ocr_mode == "balanced" else 1.5
+        try:
+            return self.reader.readtext(
+                img,
+                allowlist=allowlist,
+                decoder='beamsearch',
+                beamWidth=beam_width,
+                batch_size=1,
+                detail=1,
+                paragraph=False,
+                contrast_ths=0.05,
+                adjust_contrast=0.7,
+                text_threshold=0.4,
+                low_text=0.2,
+                link_threshold=0.2,
+                width_ths=1.0,
+                mag_ratio=mag_ratio,
+            )
+        except TypeError:
+            return self.reader.readtext(img, allowlist=allowlist)
+
+    
+    def split_plate_and_date(self, text):
+        plate_number, plate_date, _score = self.parse_ocr_result(text)
+        return plate_number, plate_date
+
+    
+    def parse_ocr_result(self, text):
+        plate_parts = []
+        date_parts = []
+        confidence = 0.0
+
+        for item in text:
+            raw_value = item[1].upper().replace(" ", "").strip()
+            if not raw_value:
+                continue
+            confidence += float(item[2]) if len(item) > 2 else 0.5
+
+            date_match = re.search(r'\d{1,2}[-./]\d{1,2}', raw_value)
+            if date_match:
+                date_parts.append(date_match.group(0).replace(".", "-").replace("/", "-"))
+                raw_value = raw_value.replace(date_match.group(0), "")
+
+            raw_value = re.sub(r'[^A-Z0-9]', '', raw_value)
+            if raw_value:
+                plate_parts.append(raw_value)
+
+        plate_number = self.format_plate_number("".join(plate_parts).strip())
+        plate_date = " ".join(date_parts).strip()
+        score = self.score_plate_candidate(plate_number, plate_date, confidence)
+        return plate_number, plate_date, score
+
+    
+    def format_plate_number(self, plate_number):
+        compact = re.sub(r'[^A-Z0-9]', '', plate_number.upper())
+        compact = self.correct_plate_compact(compact)
+        match = re.match(r'^([A-Z]{1,2})(\d{1,4})([A-Z]{1,3})$', compact)
+        if match:
+            return " ".join(match.groups())
+        return plate_number
+
+    
+    def correct_plate_compact(self, compact):
+        best_value = compact
+        best_score = -1
+
+        for start in range(len(compact)):
+            for end in range(start + 5, min(len(compact), start + 8) + 1):
+                segment = compact[start:end]
+                dropped_chars = len(compact) - len(segment)
+
+                for prefix_len in (1, 2):
+                    for suffix_len in range(1, 4):
+                        number_len = len(segment) - prefix_len - suffix_len
+                        if number_len < 1 or number_len > 4:
+                            continue
+
+                        raw_prefix = segment[:prefix_len]
+                        raw_number = segment[prefix_len:prefix_len + number_len]
+                        raw_suffix = segment[prefix_len + number_len:]
+                        prefix = self.correct_expected_letters(raw_prefix)
+                        number = self.correct_expected_digits(raw_number)
+                        suffix = self.correct_expected_letters(raw_suffix)
+                        candidate = f"{prefix}{number}{suffix}"
+
+                        if not re.match(r'^[A-Z]{1,2}\d{1,4}[A-Z]{1,3}$', candidate):
+                            continue
+
+                        score = 0
+                        score += 4 if prefix_len == 1 else 3
+                        score += min(number_len, 4)
+                        score += 3 if suffix_len in (2, 3) else 2
+                        score += sum(char.isalpha() for char in raw_prefix)
+                        score += sum(char.isdigit() for char in raw_number)
+                        score += sum(char.isalpha() for char in raw_suffix)
+                        score -= dropped_chars * 1.5
+                        if number_len >= 3:
+                            score += 2
+
+                        if score > best_score:
+                            best_value = candidate
+                            best_score = score
+
+        return best_value
+
+    
+    def correct_expected_digits(self, value):
+        replacements = {
+            'O': '0', 'Q': '0', 'D': '0',
+            'I': '1', 'L': '1',
+            'Z': '2',
+            'A': '4',
+            'S': '5',
+            'G': '6',
+            'T': '7',
+            'B': '8',
+        }
+        return "".join(replacements.get(char, char) for char in value)
+
+    
+    def correct_expected_letters(self, value):
+        replacements = {
+            '0': 'O',
+            '1': 'I',
+            '2': 'Z',
+            '4': 'A',
+            '5': 'S',
+            '6': 'G',
+            '7': 'T',
+            '8': 'B',
+        }
+        return "".join(replacements.get(char, char) for char in value)
+
+    
+    def score_plate_candidate(self, plate_number, plate_date, confidence):
+        compact = re.sub(r'[^A-Z0-9]', '', plate_number.upper())
+        score = confidence
+
+        if re.match(r'^[A-Z]{1,2}\s\d{1,4}\s[A-Z]{1,3}$', plate_number):
+            score += 10
+        elif re.match(r'^[A-Z]{1,2}\d{1,4}[A-Z]{1,3}$', compact):
+            score += 7
+        if 5 <= len(compact) <= 10:
+            score += 2
+        if plate_date:
+            score += 1
+        return score
+
+    
+    def choose_best_ocr_result(self, images, ocr_mode="accurate"):
+        candidates = {}
+
+        for image in images:
+            if image is None or not image.size:
+                continue
+
+            text = self.extract_text(image, ocr_mode)
+            if not text:
+                continue
+
+            plate_number, plate_date, score = self.parse_ocr_result(text)
+            if not plate_number and not plate_date:
+                continue
+
+            if self.is_confident_ocr(plate_number, plate_date, score, ocr_mode):
+                return plate_number, plate_date, score
+
+            key = re.sub(r'[^A-Z0-9]', '', plate_number.upper())
+            if not key:
+                key = plate_date
+
+            if key not in candidates:
+                candidates[key] = {
+                    "plate": plate_number,
+                    "date": plate_date,
+                    "count": 0,
+                    "score": 0.0,
+                    "best_score": -1,
+                }
+
+            candidates[key]["count"] += 1
+            candidates[key]["score"] += score
+            candidates[key]["best_score"] = max(candidates[key]["best_score"], score)
+            if plate_date:
+                candidates[key]["date"] = plate_date
+
+        if not candidates:
+            return "", "", 0
+
+        best = max(
+            candidates.values(),
+            key=lambda item: (
+                item["count"] * 8 + item["score"] + item["best_score"],
+                bool(item["date"]),
+                len(re.sub(r'[^A-Z0-9]', '', item["plate"])),
+            ),
+        )
+
+        return best["plate"], best["date"], best["best_score"]
+
+    
+    def is_confident_ocr(self, plate_number, plate_date, score, ocr_mode="accurate"):
+        compact = re.sub(r'[^A-Z0-9]', '', (plate_number or "").upper())
+        valid_plate = bool(re.match(r'^[A-Z]{1,2}\d{1,4}[A-Z]{1,3}$', compact))
+        if not valid_plate:
+            return False
+
+        threshold = {
+            "fast": 12.5,
+            "balanced": 13.0,
+            "accurate": 13.5,
+        }.get(ocr_mode, 14.0)
+        return score >= threshold or (score >= threshold - 1.0 and bool(plate_date))
+
+    
+    def build_ocr_images(self, image, ocr_mode="accurate"):
+        base = self.resize_for_ocr(image, max_size=900)
+        if base.shape[0] < 80 or base.shape[1] < 240:
+            scale = 1.8 if ocr_mode == "fast" else 2.5
+            base = cv2.resize(base, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+
+        gray = cv2.cvtColor(base, cv2.COLOR_BGR2GRAY)
+        denoised = cv2.bilateralFilter(gray, 7, 45, 45)
+        clahe = cv2.createCLAHE(clipLimit=2.2, tileGridSize=(8, 8)).apply(denoised)
+        sharpen_kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+        sharpened = cv2.filter2D(clahe, -1, sharpen_kernel)
+        otsu = cv2.threshold(sharpened, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+
+        if ocr_mode == "fast":
+            return [
+                base,
+                sharpened,
+                otsu,
+            ]
+
+        adaptive = cv2.adaptiveThreshold(
+            sharpened,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY,
+            31,
+            9,
+        )
+
+        if ocr_mode == "balanced":
+            return [
+                base,
+                clahe,
+                sharpened,
+                otsu,
+                adaptive,
+            ]
+
+        return [
+            base,
+            gray,
+            denoised,
+            clahe,
+            sharpened,
+            otsu,
+            255 - otsu,
+            adaptive,
+        ]
+
+    
+    def resize_for_ocr(self, image, max_size=1000):
+        height, width = image.shape[:2]
+        largest_side = max(height, width)
+        if largest_side <= max_size:
+            return image
+
+        scale = max_size / largest_side
+        new_size = (int(width * scale), int(height * scale))
+        return cv2.resize(image, new_size, interpolation=cv2.INTER_AREA)
+
+    
+    def fallback_recognition(self, img, ocr_mode="accurate"):
+        height, width = img.shape[:2]
+        candidates = [
+            img,
+            img[int(height * 0.2):height, :],
+            img[int(height * 0.25):height, int(width * 0.05):int(width * 0.95)],
+        ]
+        if ocr_mode == "fast":
+            candidates = candidates[:1]
+        elif ocr_mode == "balanced":
+            candidates = candidates[:2]
+
+        ocr_images = []
+        for candidate in candidates:
+            if candidate is None or not candidate.size:
+                continue
+            ocr_images.extend(self.build_ocr_images(candidate, ocr_mode))
+
+        plate_number, plate_date, _score = self.choose_best_ocr_result(ocr_images, ocr_mode)
+        return plate_number, plate_date
     
     
     def letterbox(self, im, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleup=True, stride=32):
@@ -80,10 +394,14 @@ class PlateRecognition():
         return outputs, ratio, dwdh
     
     
-    def plat_recognition(self, img, box):
-        x, y, w, h = box[0], box[1], (box[2] - box[0]), (box[3] - box[1])
+    def plat_recognition(self, img, box, ocr_mode="accurate"):
+        height, width = img.shape[:2]
+        x0 = max(box[0] - 6, 0)
+        y0 = max(box[1] - 6, 0)
+        x1 = min(box[2] + 6, width)
+        y1 = min(box[3] + 6, height)
 
-        crop_img = img[y:y + h, x:x + w]
+        crop_img = img[y0:y1, x0:x1]
         hr_img = self.enhancer.enhance_image(crop_img)
 
         if hr_img.shape[0] > 400 or hr_img.shape[1] > 400:
@@ -94,33 +412,32 @@ class PlateRecognition():
         kernel = np.ones((2, 2), np.uint8)
         dilate = cv2.dilate(inv, kernel)
 
-        # try:
-        result = ""
-        text = self.extract_text(dilate)
-        if text:
-            # print(text)
-            if text[0][2] > 0.3:
-                for s in text:
-                    result += s[1]
-                return result
-        
-        text = self.extract_text(skewness)
-        if text:
-            # print(text)
-            for s in text:
-                result += s[1]
-            return result
+        ocr_images = [
+            dilate,
+            skewness,
+            thresh_skew,
+            crop_img,
+            hr_img,
+        ]
+        if ocr_mode == "fast":
+            ocr_images = [skewness, dilate, crop_img]
+        elif ocr_mode == "balanced":
+            ocr_images = [dilate, skewness, crop_img, hr_img]
+        ocr_images.extend(self.build_ocr_images(hr_img, ocr_mode))
+        plate_number, plate_date, _score = self.choose_best_ocr_result(ocr_images, ocr_mode)
+        if plate_number or plate_date:
+            return plate_number, plate_date
 
-        result = "not detected"
-        return result
+        return "not detected", ""
     
     
-    def anpr(self, img, threshold):
+    def anpr(self, img, threshold, ocr_mode="accurate"):
         # plate detector
         outputs, ratio, dwdh = self.plate_detector(img)
 
         result = [img.copy()]
         license_num = ""
+        plate_date = ""
 
         for i,(batch_id,x0,y0,x1,y1,cls_id,score) in enumerate(outputs):
             image = result[int(batch_id)]
@@ -131,7 +448,7 @@ class PlateRecognition():
 
             if score >= threshold:
                 # plate recognition
-                license_num = self.plat_recognition(image, box)
+                license_num, plate_date = self.plat_recognition(image, box, ocr_mode)
 
                 color = [0, 255, 0]
                 if license_num == "not detected":
@@ -141,6 +458,8 @@ class PlateRecognition():
 
                 cv2.rectangle(image, box[:2], box[2:], color, 2)
                 cv2.putText(image, license_num, (box[0], box[1] - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, thickness=2)
+                if plate_date:
+                    cv2.putText(image, plate_date, (box[0], box[3] + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, thickness=2)
 
         # result = cv2.cvtColor(result[0], cv2.COLOR_BGR2RGB)
-        return result[0], license_num
+        return result[0], license_num, plate_date

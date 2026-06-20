@@ -10,11 +10,18 @@ from rtsr.models import Generator
 class SuperResolution():
     def __init__(self):
         self.generator = Generator()
-        self.generator.load_weights('./rtsr/weights/GeneratorVG4(1520).h5')
-        print("Super Resolution model loaded.")
+        try:
+            self.generator.load_weights('./rtsr/weights/GeneratorVG4(1520).h5')
+            print("Super Resolution model loaded.")
+        except Exception as exc:
+            self.generator = None
+            print(f"Super Resolution disabled: {exc}")
         
     
     def enhance_image(self, image=None, size=(20, 16)):
+        if self.generator is None:
+            return image
+
         cv_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         lr_image = tf.convert_to_tensor(cv_rgb, dtype=tf.float32)
 

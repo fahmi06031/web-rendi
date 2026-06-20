@@ -1,10 +1,7 @@
 import cv2
 import numpy as np
-from scipy.ndimage import interpolation as inter
 from scipy.ndimage import rotate
 import time
-import torch
-import numpy as np
 
 
 class FPS:
@@ -14,8 +11,13 @@ class FPS:
         self.avg = avg
 
     def synchronize(self):
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+        except Exception:
+            pass
 
     def start(self):
         self.synchronize()
