@@ -14,6 +14,7 @@
     </div>
     <nav>
       <a class="active" href="{{ url_for('index') }}">Deteksi</a>
+      <a href="{{ url_for('vehicles_page') }}">Data Kendaraan</a>
       <a href="{{ url_for('history_page') }}">Riwayat</a>
       <span>{{ username }}</span>
       <a href="{{ url_for('logout') }}">Logout</a>
@@ -119,6 +120,8 @@
             <p id="vehicleTaxText">-</p>
           </div>
           <div id="newVehicleForm" class="new-vehicle-form" hidden>
+            <label for="plateNumberInput">Nomor plat</label>
+            <input id="plateNumberInput" type="text" placeholder="Koreksi nomor plat">
             <label for="ownerNameInput">Nama pemilik</label>
             <input id="ownerNameInput" type="text" placeholder="Masukkan nama pemilik">
             <label for="plateDateInput">Masa pajak</label>

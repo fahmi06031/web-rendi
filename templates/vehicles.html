@@ -3,19 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Riwayat Deteksi Plat</title>
+  <title>Data Kendaraan</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body class="app-page">
   <header class="topbar">
     <div>
       <p class="eyebrow">ANPR Web</p>
-      <h1>Riwayat Deteksi</h1>
+      <h1>Data Kendaraan</h1>
     </div>
     <nav>
       <a href="{{ url_for('index') }}">Deteksi</a>
-      <a href="{{ url_for('vehicles_page') }}">Data Kendaraan</a>
-      <a class="active" href="{{ url_for('history_page') }}">Riwayat</a>
+      <a class="active" href="{{ url_for('vehicles_page') }}">Data Kendaraan</a>
+      <a href="{{ url_for('history_page') }}">Riwayat</a>
       <span>{{ username }}</span>
       <a href="{{ url_for('logout') }}">Logout</a>
     </nav>
@@ -37,10 +37,10 @@
       </article>
     </section>
 
-    <section class="history-panel" aria-label="Riwayat deteksi">
+    <section class="history-panel" aria-label="Data kendaraan">
       <div class="section-heading">
-        <h2>Log Deteksi</h2>
-        <span>Riwayat kapan plat berhasil diproses dan dikonfirmasi</span>
+        <h2>Master Kendaraan</h2>
+        <span>Data plat, pemilik, dan masa pajak yang dipakai untuk validasi</span>
       </div>
       <form class="filter-bar" method="get">
         <input name="q" type="search" placeholder="Cari plat atau pemilik" value="{{ filters.q }}">
@@ -50,48 +50,35 @@
           <option value="expired" {% if filters.tax_status == "expired" %}selected{% endif %}>Pajak Mati</option>
           <option value="unknown" {% if filters.tax_status == "unknown" %}selected{% endif %}>Tidak Diketahui</option>
         </select>
-        <select name="source">
-          <option value="">Semua sumber</option>
-          <option value="capture" {% if filters.source == "capture" %}selected{% endif %}>Capture</option>
-          <option value="upload" {% if filters.source == "upload" %}selected{% endif %}>Upload</option>
-        </select>
-        <input name="date_from" type="date" value="{{ filters.date_from }}">
-        <input name="date_to" type="date" value="{{ filters.date_to }}">
         <button type="submit">Filter</button>
-        <a class="reset-link" href="{{ url_for('history_page') }}">Reset</a>
+        <a class="reset-link" href="{{ url_for('vehicles_page') }}">Reset</a>
       </form>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Waktu</th>
               <th>Nomor Plat</th>
               <th>Pemilik</th>
-              <th>Tanggal</th>
+              <th>Masa Pajak</th>
               <th>Status Pajak</th>
-              <th>Sumber</th>
-              <th>Threshold</th>
-              <th>Gambar</th>
-              <th>Detail</th>
+              <th>Jumlah Deteksi</th>
+              <th>Terakhir Deteksi</th>
               <th>Aksi</th>
             </tr>
           </thead>
           <tbody>
-            {% for item in detections %}
+            {% for item in vehicles %}
               <tr>
-                <td>{{ item.created_at }}</td>
                 <td>{{ item.plate_number }}</td>
-                <td>{{ item.owner_name or "-" }}</td>
+                <td>{{ item.owner_name }}</td>
                 <td>{{ item.plate_date or "-" }}</td>
                 <td>
                   <span class="tax-badge {{ item.tax_status.class }}">
                     {{ item.tax_status.label }}
                   </span>
                 </td>
-                <td>{{ item.source }}</td>
-                <td>{{ "%.2f"|format(item.threshold) }}</td>
-                <td><a href="{{ item.image_url }}" target="_blank" rel="noreferrer">Lihat</a></td>
-                <td><a href="{{ url_for('detection_detail_page', detection_id=item.id) }}">Detail</a></td>
+                <td>{{ item.detection_count }}</td>
+                <td>{{ item.last_detected_at or "-" }}</td>
                 <td>
                   <div class="row-actions">
                     <button
@@ -99,7 +86,7 @@
                       type="button"
                       data-id="{{ item.id }}"
                       data-plate="{{ item.plate_number }}"
-                      data-owner="{{ item.owner_name or '' }}"
+                      data-owner="{{ item.owner_name }}"
                       data-date="{{ item.plate_date or '' }}"
                     >Edit</button>
                     <button
@@ -113,7 +100,7 @@
               </tr>
             {% else %}
               <tr>
-                <td colspan="10">Belum ada hasil deteksi tersimpan.</td>
+                <td colspan="7">Belum ada data kendaraan.</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -124,7 +111,7 @@
     <dialog id="editDialog" class="edit-dialog">
       <form id="editForm" method="dialog">
         <div class="dialog-heading">
-          <h2>Edit Data</h2>
+          <h2>Edit Kendaraan</h2>
           <button id="closeEditDialog" class="icon-close" type="button" aria-label="Tutup">x</button>
         </div>
         <input id="editIdInput" type="hidden">
@@ -151,15 +138,6 @@
     const editDateInput = document.querySelector("#editDateInput");
     const editMessage = document.querySelector("#editMessage");
 
-    function openEditDialog(button) {
-      editIdInput.value = button.dataset.id;
-      editPlateInput.value = button.dataset.plate || "";
-      editOwnerInput.value = button.dataset.owner || "";
-      editDateInput.value = button.dataset.date || "";
-      editMessage.textContent = "";
-      editDialog.showModal();
-    }
-
     async function sendJson(url, method, body) {
       const response = await fetch(url, {
         method,
@@ -174,20 +152,24 @@
     }
 
     document.querySelectorAll(".edit-action").forEach((button) => {
-      button.addEventListener("click", () => openEditDialog(button));
+      button.addEventListener("click", () => {
+        editIdInput.value = button.dataset.id;
+        editPlateInput.value = button.dataset.plate || "";
+        editOwnerInput.value = button.dataset.owner || "";
+        editDateInput.value = button.dataset.date || "";
+        editMessage.textContent = "";
+        editDialog.showModal();
+      });
     });
 
     document.querySelectorAll(".delete-action").forEach((button) => {
       button.addEventListener("click", async () => {
-        const plate = button.dataset.plate || "data ini";
-        const confirmed = window.confirm(`Hapus data ${plate}?`);
-        if (!confirmed) {
+        if (!window.confirm(`Hapus kendaraan ${button.dataset.plate}? Riwayat deteksinya juga akan dihapus.`)) {
           return;
         }
-
         button.disabled = true;
         try {
-          await sendJson(`/api/detections/${button.dataset.id}`, "DELETE");
+          await sendJson(`/api/vehicles/${button.dataset.id}`, "DELETE");
           window.location.reload();
         } catch (error) {
           alert(error.message);
@@ -203,7 +185,7 @@
       event.preventDefault();
       editMessage.textContent = "Menyimpan perubahan...";
       try {
-        await sendJson(`/api/detections/${editIdInput.value}`, "PUT", {
+        await sendJson(`/api/vehicles/${editIdInput.value}`, "PUT", {
           plateNumber: editPlateInput.value.trim(),
           ownerName: editOwnerInput.value.trim(),
           plateDate: editDateInput.value.trim(),

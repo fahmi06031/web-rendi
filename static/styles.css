@@ -295,6 +295,8 @@ output {
 }
 
 input[type="number"],
+.filter-bar input,
+.filter-bar select,
 .control-group select,
 .new-vehicle-form input,
 .login-form input {
@@ -309,6 +311,8 @@ input[type="number"],
 }
 
 input[type="number"]:focus,
+.filter-bar input:focus,
+.filter-bar select:focus,
 .control-group select:focus,
 .new-vehicle-form input:focus,
 .login-form input:focus {
@@ -495,6 +499,32 @@ button:disabled {
   padding: 20px;
 }
 
+.filter-bar {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.2fr) repeat(4, minmax(130px, 0.7fr)) auto auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.filter-bar button {
+  min-height: 42px;
+}
+
+.reset-link,
+.detail-back-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: #ffffff;
+  color: var(--primary-dark);
+  font-weight: 900;
+  text-decoration: none;
+}
+
 .tax-badge {
   display: inline-flex;
   align-items: center;
@@ -658,6 +688,53 @@ tr:last-child td {
   font-weight: 800;
 }
 
+.detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 20px;
+}
+
+.detail-image-panel,
+.detail-info-panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: #ffffff;
+  box-shadow: var(--shadow-soft);
+}
+
+.detail-image-panel {
+  display: grid;
+  min-height: 520px;
+  overflow: hidden;
+  place-items: center;
+  background: #060b12;
+}
+
+.detail-image-panel img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.detail-info-panel {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  padding: 20px;
+}
+
+.detail-info-panel strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 30px;
+}
+
+.detail-info-panel p {
+  margin: 6px 0 0;
+  color: var(--ink);
+  font-weight: 800;
+}
+
 .login-page {
   display: grid;
   min-height: 100vh;
@@ -716,7 +793,8 @@ tr:last-child td {
   }
 
   .summary-grid,
-  .workbench {
+  .workbench,
+  .detail-grid {
     grid-template-columns: 1fr;
   }
 
@@ -734,6 +812,10 @@ tr:last-child td {
     align-items: start;
     flex-direction: column;
   }
+
+  .filter-bar {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 @media (max-width: 640px) {
@@ -749,5 +831,9 @@ tr:last-child td {
 
   .inline-field {
     grid-template-columns: 1fr max-content;
+  }
+
+  .filter-bar {
+    grid-template-columns: 1fr;
   }
 }

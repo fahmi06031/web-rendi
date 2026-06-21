@@ -214,24 +214,187 @@ def save_detection(plate_number, plate_date, source, image_url, threshold, owner
             )
 
 
-def fetch_recent_detections(limit=25):
+def fetch_recent_detections(limit=25, filters=None):
+    filters = filters or {}
+    where = []
+    params = []
+
+    query = (filters.get("q") or "").strip()
+    if query:
+        where.append("(plate_number LIKE %s OR owner_name LIKE %s)")
+        like = f"%{query}%"
+        params.extend([like, like])
+
+    source = (filters.get("source") or "").strip()
+    if source:
+        where.append("source = %s")
+        params.append(source)
+
+    date_from = (filters.get("date_from") or "").strip()
+    if date_from:
+        where.append("DATE(created_at) >= %s")
+        params.append(date_from)
+
+    date_to = (filters.get("date_to") or "").strip()
+    if date_to:
+        where.append("DATE(created_at) <= %s")
+        params.append(date_to)
+
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     with get_mysql_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
-                """
+                f"""
                 SELECT id, plate_number, plate_date, owner_name, source, image_url, threshold, created_at
                 FROM detections
+                {where_sql}
                 ORDER BY id DESC
                 LIMIT %s
                 """,
-                (limit,),
+                (*params, limit),
             )
             rows = cursor.fetchall()
             for row in rows:
                 if isinstance(row.get("created_at"), datetime):
                     row["created_at"] = row["created_at"].isoformat(timespec="seconds")
                 row["tax_status"] = get_tax_status(row.get("plate_date"))
+            status_filter = (filters.get("tax_status") or "").strip()
+            if status_filter:
+                rows = [row for row in rows if row["tax_status"]["class"] == status_filter]
             return rows
+
+
+def fetch_detection_detail(detection_id):
+    with get_mysql_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, plate_number, plate_date, owner_name, source, image_url, threshold, created_at
+                FROM detections
+                WHERE id = %s
+                LIMIT 1
+                """,
+                (detection_id,),
+            )
+            row = cursor.fetchone()
+
+    if row is None:
+        return None
+
+    if isinstance(row.get("created_at"), datetime):
+        row["created_at"] = row["created_at"].isoformat(timespec="seconds")
+    row["tax_status"] = get_tax_status(row.get("plate_date"))
+    row["vehicle"] = find_vehicle_by_plate(row.get("plate_number"))
+    return row
+
+
+def fetch_vehicles(limit=100, filters=None):
+    filters = filters or {}
+    where = []
+    params = []
+    query = (filters.get("q") or "").strip()
+    if query:
+        where.append("(plate_number LIKE %s OR owner_name LIKE %s)")
+        like = f"%{query}%"
+        params.extend([like, like])
+
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    with get_mysql_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT v.id, v.plate_key, v.plate_number, v.owner_name, v.plate_date,
+                       v.created_at, v.updated_at,
+                       COUNT(d.id) AS detection_count,
+                       MAX(d.created_at) AS last_detected_at
+                FROM vehicles v
+                LEFT JOIN detections d
+                    ON REPLACE(REPLACE(UPPER(d.plate_number), ' ', ''), '-', '') = v.plate_key
+                {where_sql}
+                GROUP BY v.id, v.plate_key, v.plate_number, v.owner_name, v.plate_date, v.created_at, v.updated_at
+                ORDER BY v.updated_at DESC, v.id DESC
+                LIMIT %s
+                """,
+                (*params, limit),
+            )
+            rows = cursor.fetchall()
+
+    for row in rows:
+        for key in ("created_at", "updated_at", "last_detected_at"):
+            if isinstance(row.get(key), datetime):
+                row[key] = row[key].isoformat(timespec="seconds")
+        row["tax_status"] = get_tax_status(row.get("plate_date"))
+
+    status_filter = (filters.get("tax_status") or "").strip()
+    if status_filter:
+        rows = [row for row in rows if row["tax_status"]["class"] == status_filter]
+    return rows
+
+
+def update_vehicle(vehicle_id, plate_number, owner_name, plate_date):
+    plate_number = (plate_number or "").strip().upper()
+    owner_name = (owner_name or "").strip()
+    plate_date = (plate_date or "").strip()
+    new_plate_key = normalize_plate_key(plate_number)
+
+    if not new_plate_key:
+        raise ValueError("Nomor plat wajib diisi")
+    if not owner_name:
+        raise ValueError("Nama pemilik wajib diisi")
+
+    with get_mysql_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT * FROM vehicles WHERE id = %s LIMIT 1", (vehicle_id,))
+            existing = cursor.fetchone()
+            if existing is None:
+                return False
+
+            old_plate_key = existing["plate_key"]
+            cursor.execute(
+                """
+                UPDATE vehicles
+                SET plate_key = %s, plate_number = %s, owner_name = %s, plate_date = %s, updated_at = %s
+                WHERE id = %s
+                """,
+                (
+                    new_plate_key,
+                    plate_number,
+                    owner_name,
+                    plate_date if plate_date not in ("", "-") else None,
+                    datetime.now(),
+                    vehicle_id,
+                ),
+            )
+            cursor.execute(
+                """
+                UPDATE detections
+                SET plate_number = %s, owner_name = %s, plate_date = %s
+                WHERE REPLACE(REPLACE(UPPER(plate_number), ' ', ''), '-', '') = %s
+                """,
+                (
+                    plate_number,
+                    owner_name,
+                    plate_date if plate_date not in ("", "-") else None,
+                    old_plate_key,
+                ),
+            )
+    return True
+
+
+def delete_vehicle(vehicle_id):
+    with get_mysql_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT plate_key FROM vehicles WHERE id = %s LIMIT 1", (vehicle_id,))
+            existing = cursor.fetchone()
+            if existing is None:
+                return False
+            plate_key = existing["plate_key"]
+            cursor.execute(
+                "DELETE FROM detections WHERE REPLACE(REPLACE(UPPER(plate_number), ' ', ''), '-', '') = %s",
+                (plate_key,),
+            )
+            cursor.execute("DELETE FROM vehicles WHERE id = %s", (vehicle_id,))
+    return True
 
 
 def update_detection(detection_id, plate_number, owner_name, plate_date):
@@ -876,7 +1039,7 @@ class WebPlateDetector:
             **response,
         }
 
-    def save_pending_detection(self, owner_name=None, plate_date=None):
+    def save_pending_detection(self, owner_name=None, plate_date=None, plate_number=None):
         with self.lock:
             pending = dict(self.pending_detection) if self.pending_detection else None
 
@@ -895,10 +1058,18 @@ class WebPlateDetector:
                 "message": "Nama pemilik wajib diisi",
             }
 
+        selected_plate = (plate_number or pending["plate_number"]).strip().upper()
+        if not selected_plate:
+            return False, {
+                **self.get_status(),
+                "ok": False,
+                "message": "Nomor plat wajib diisi",
+            }
+
         selected_date = plate_date if plate_date not in (None, "") else pending["plate_date"]
-        vehicle = save_vehicle(pending["plate_number"], owner_name, selected_date)
+        vehicle = save_vehicle(selected_plate, owner_name, selected_date)
         save_detection(
-            pending["plate_number"],
+            selected_plate,
             selected_date,
             pending["source"],
             pending["image_url"],
@@ -910,6 +1081,7 @@ class WebPlateDetector:
             self.pending_detection = None
             self.vehicle_info = vehicle
             self.registration_status = "registered"
+            self.plate_text = selected_plate
             self.plate_date = selected_date or "-"
             self.status = "Data kendaraan berhasil ditambahkan"
 
@@ -1013,11 +1185,48 @@ def index():
 @app.route("/history")
 @login_required
 def history_page():
+    filters = {
+        "q": request.args.get("q", ""),
+        "source": request.args.get("source", ""),
+        "tax_status": request.args.get("tax_status", ""),
+        "date_from": request.args.get("date_from", ""),
+        "date_to": request.args.get("date_to", ""),
+    }
     return render_template(
         "history.html",
         username=session.get("username", "admin"),
         stats=fetch_detection_stats(),
-        detections=fetch_recent_detections(limit=100),
+        detections=fetch_recent_detections(limit=100, filters=filters),
+        filters=filters,
+    )
+
+
+@app.route("/vehicles")
+@login_required
+def vehicles_page():
+    filters = {
+        "q": request.args.get("q", ""),
+        "tax_status": request.args.get("tax_status", ""),
+    }
+    return render_template(
+        "vehicles.html",
+        username=session.get("username", "admin"),
+        stats=fetch_detection_stats(),
+        vehicles=fetch_vehicles(limit=100, filters=filters),
+        filters=filters,
+    )
+
+
+@app.route("/detections/<int:detection_id>")
+@login_required
+def detection_detail_page(detection_id):
+    detection = fetch_detection_detail(detection_id)
+    if detection is None:
+        return redirect(url_for("history_page"))
+    return render_template(
+        "detail.html",
+        username=session.get("username", "admin"),
+        detection=detection,
     )
 
 
@@ -1148,6 +1357,7 @@ def upload():
 def add_detection():
     data = request.get_json(silent=True) or {}
     ok, data = detector_state.save_pending_detection(
+        plate_number=data.get("plateNumber"),
         owner_name=data.get("ownerName"),
         plate_date=data.get("plateDate"),
     )
@@ -1191,6 +1401,46 @@ def remove_detection(detection_id):
         "message": "Data berhasil dihapus",
         "stats": fetch_detection_stats(),
         "detections": fetch_recent_detections(limit=100),
+    })
+
+
+@app.route("/api/vehicles/<int:vehicle_id>", methods=["PUT"])
+@login_required
+def edit_vehicle(vehicle_id):
+    data = request.get_json(silent=True) or {}
+    try:
+        updated = update_vehicle(
+            vehicle_id,
+            data.get("plateNumber"),
+            data.get("ownerName"),
+            data.get("plateDate"),
+        )
+    except (ValueError, pymysql.err.IntegrityError) as exc:
+        return jsonify({"ok": False, "message": str(exc)}), 400
+
+    if not updated:
+        return jsonify({"ok": False, "message": "Data kendaraan tidak ditemukan"}), 404
+
+    return jsonify({
+        "ok": True,
+        "message": "Data kendaraan berhasil diperbarui",
+        "stats": fetch_detection_stats(),
+        "vehicles": fetch_vehicles(limit=100),
+    })
+
+
+@app.route("/api/vehicles/<int:vehicle_id>", methods=["DELETE"])
+@login_required
+def remove_vehicle(vehicle_id):
+    deleted = delete_vehicle(vehicle_id)
+    if not deleted:
+        return jsonify({"ok": False, "message": "Data kendaraan tidak ditemukan"}), 404
+
+    return jsonify({
+        "ok": True,
+        "message": "Data kendaraan berhasil dihapus",
+        "stats": fetch_detection_stats(),
+        "vehicles": fetch_vehicles(limit=100),
     })
 
 

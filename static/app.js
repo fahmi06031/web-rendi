@@ -14,6 +14,7 @@ const vehicleInfoPanel = document.querySelector("#vehicleInfoPanel");
 const vehicleOwnerText = document.querySelector("#vehicleOwnerText");
 const vehicleTaxText = document.querySelector("#vehicleTaxText");
 const newVehicleForm = document.querySelector("#newVehicleForm");
+const plateNumberInput = document.querySelector("#plateNumberInput");
 const ownerNameInput = document.querySelector("#ownerNameInput");
 const plateDateInput = document.querySelector("#plateDateInput");
 const plateText = document.querySelector("#plateText");
@@ -116,6 +117,10 @@ function renderVehicleState(state) {
   if (status === "unregistered" && state.hasPendingDetection) {
     newVehicleForm.hidden = false;
     addDataButton.textContent = "Tambah Data Kendaraan";
+    if (!plateNumberInput.value || plateNumberInput.dataset.fromDetection !== state.plate) {
+      plateNumberInput.value = state.plate && state.plate !== "-" ? state.plate : "";
+      plateNumberInput.dataset.fromDetection = state.plate || "";
+    }
     if (!plateDateInput.value || plateDateInput.dataset.fromDetection !== state.date) {
       plateDateInput.value = state.date && state.date !== "-" ? state.date : "";
       plateDateInput.dataset.fromDetection = state.date || "";
@@ -239,6 +244,12 @@ uploadButton.addEventListener("click", async () => {
 });
 
 addDataButton.addEventListener("click", async () => {
+  if (!plateNumberInput.value.trim()) {
+    statusText.textContent = "Nomor plat wajib diisi";
+    plateNumberInput.focus();
+    return;
+  }
+
   if (!ownerNameInput.value.trim()) {
     statusText.textContent = "Nama pemilik wajib diisi";
     ownerNameInput.focus();
@@ -249,12 +260,14 @@ addDataButton.addEventListener("click", async () => {
   statusText.textContent = "Menambahkan data ke database...";
   try {
     const state = await postJson("/api/detections/add", {
+      plateNumber: plateNumberInput.value.trim(),
       ownerName: ownerNameInput.value.trim(),
       plateDate: plateDateInput.value.trim(),
     });
     if (state.ok === false) {
       statusText.textContent = state.message || "Data gagal ditambahkan";
     } else {
+      plateNumberInput.value = "";
       ownerNameInput.value = "";
       renderState(state);
       await refreshHistory();
