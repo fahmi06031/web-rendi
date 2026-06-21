@@ -13,6 +13,7 @@ const addDataButton = document.querySelector("#addDataButton");
 const vehicleInfoPanel = document.querySelector("#vehicleInfoPanel");
 const vehicleOwnerText = document.querySelector("#vehicleOwnerText");
 const vehicleTaxText = document.querySelector("#vehicleTaxText");
+const vehicleDateWarning = document.querySelector("#vehicleDateWarning");
 const newVehicleForm = document.querySelector("#newVehicleForm");
 const plateNumberInput = document.querySelector("#plateNumberInput");
 const ownerNameInput = document.querySelector("#ownerNameInput");
@@ -104,7 +105,8 @@ function renderVehicleState(state) {
     newVehicleForm.hidden = true;
     vehicleOwnerText.textContent = vehicle.owner_name || "-";
     const taxLabel = vehicle.tax_status?.label || "Tidak Diketahui";
-    vehicleTaxText.textContent = `Pajak: ${taxLabel} | Masa pajak: ${vehicle.plate_date || "-"}`;
+    vehicleTaxText.textContent = `Status pajak: ${taxLabel} | Masa pajak database: ${vehicle.plate_date || "-"}`;
+    renderDateWarning(state.date, vehicle.plate_date);
     addDataButton.textContent = "Data Sudah Terdaftar";
     addDataButton.disabled = true;
     return;
@@ -113,6 +115,8 @@ function renderVehicleState(state) {
   vehicleInfoPanel.hidden = true;
   vehicleOwnerText.textContent = "-";
   vehicleTaxText.textContent = "-";
+  vehicleDateWarning.hidden = true;
+  vehicleDateWarning.textContent = "-";
 
   if (status === "unregistered" && state.hasPendingDetection) {
     newVehicleForm.hidden = false;
@@ -130,6 +134,30 @@ function renderVehicleState(state) {
 
   newVehicleForm.hidden = true;
   addDataButton.textContent = "Tambah Data Kendaraan";
+}
+
+function normalizePlateDate(value) {
+  const match = String(value || "").match(/(\d{1,2})[-./](\d{2,4})/);
+  if (!match) {
+    return "";
+  }
+  const month = match[1].padStart(2, "0");
+  const year = match[2].length === 4 ? match[2].slice(-2) : match[2].padStart(2, "0");
+  return `${month}-${year}`;
+}
+
+function renderDateWarning(ocrDate, databaseDate) {
+  const normalizedOcr = normalizePlateDate(ocrDate);
+  const normalizedDatabase = normalizePlateDate(databaseDate);
+
+  if (normalizedOcr && normalizedDatabase && normalizedOcr !== normalizedDatabase) {
+    vehicleDateWarning.hidden = false;
+    vehicleDateWarning.textContent = `Tanggal OCR berbeda dari database: OCR ${normalizedOcr}, database ${normalizedDatabase}`;
+    return;
+  }
+
+  vehicleDateWarning.hidden = true;
+  vehicleDateWarning.textContent = "-";
 }
 
 async function refreshStatus() {

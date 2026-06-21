@@ -452,8 +452,17 @@ button:disabled {
   font-weight: 800;
 }
 
+.vehicle-info .date-warning {
+  padding: 10px;
+  border: 1px solid rgba(245, 158, 11, 0.30);
+  border-radius: 10px;
+  background: rgba(245, 158, 11, 0.11);
+  color: #92400e;
+}
+
 .vehicle-info[hidden],
-.new-vehicle-form[hidden] {
+.new-vehicle-form[hidden],
+.date-warning[hidden] {
   display: none;
 }
 
